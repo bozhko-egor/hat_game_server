@@ -17,8 +17,7 @@ class WebSocketHandler(websocket.WebSocketHandler):
         print("new connection from {}".format(self.request.remote_ip))
 
     def on_message(self, message):
-        print(message)
-        if message is '123':
+        if message is None:
             return
         if self.message_handler(message) is not None:  # horrible shit
             game = self.game_check(self)
