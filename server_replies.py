@@ -87,7 +87,7 @@ def word_generation_json(room_name, words, turn_time, players, words_pending_fro
                           "words": words,
                           "turn_time": 0,
                           "players": players,
-                          "words_pending_from": []
+                          "words_pending_from": words_pending_from
                     }
                     }
     return msg

@@ -21,7 +21,7 @@ class WebSocketHandler(websocket.WebSocketHandler):
     def on_message(self, message):
         if message is None:
             return
-        self.check_name(self, message)  # присвоить имя, если нет
+        self.check_name(self, json.loads(message))  # присвоить имя, если нет
         if self.message_handler(message) is not None:  # horrible shit
             game = self.game_check(self)
             game.task_queue.insert(0, (message, self))
@@ -48,9 +48,9 @@ class WebSocketHandler(websocket.WebSocketHandler):
                 return room
 
     def check_name(self, conn, message):
-        if conn not in clients_all.keys():
-            clients_all.update({conn: message['player_name']})
-            print(clients_all)
+        if conn not in self.clients_all.keys():
+            self.clients_all.update({conn: message['player_name']})
+            print(self.clients_all)
 
     def get_room_list(self, data):
         names = {room.room_name: {"players": [x for x in room.clients.values()],
@@ -63,7 +63,7 @@ class WebSocketHandler(websocket.WebSocketHandler):
                            )
 
     def create_or_join_room(self, data):
-        if data['room_name'] not in self.rooms:
+        if data['room_name'] not in [x.room_name for x in self.rooms]:
             new_room = GameRoom(**data)
             self.rooms.append(new_room)
             new_room.join_gameroom({self: self.clients_all[self]})
@@ -73,7 +73,7 @@ class WebSocketHandler(websocket.WebSocketHandler):
                         new_room.status,
                         new_room.words,
                         new_room.turn_time,
-                        list(clients.values())
+                        list(new_room.clients.values())
                      )
                 )
             start_new_thread(self.room_thread, (new_room,))
@@ -126,7 +126,7 @@ class GameRoom:
         self.turn_order = []
         self.score = []
         self.player_gen = None
-        self.words_pending_form = []
+        self.words_pending_from = []
 
     def join_gameroom(self, conn):
         self.clients.update(conn)
@@ -156,17 +156,17 @@ class GameRoom:
         func = switch.get(message['action'])
         return func(message['data'], conn)
 
-    def start_word_generation(self):
+    def start_word_generation(self, data, conn):
         if self.status == 'in_room':
             self.status == 'word_generation'
-            self.words_pending_form == list(self.clients.values())
+            self.words_pending_from = list(self.clients.values())
             self._send_all(
                 word_generation_json(
                     self.room_name,
                     self.words,
                     self.turn_time,
                     list(self.clients.values()),
-                    self.words_pending_form
+                    self.words_pending_from
 
                 ))
 
@@ -213,7 +213,7 @@ class GameRoom:
 
     def next_turn(self):
         if self.words_all:
-            player = next(self.player_gen())
+            player = next(self.player_gen)
             self._send_all({
                         "room_name": self.room_name,
                         "state": "hatgame",
@@ -253,18 +253,18 @@ class GameRoom:
 
     def get_words(self, data, conn):
         words = data['words']
-        if len(words) == self.word_count:
+        if len(words) == self.words:
             self.words_all += words
             print(self.words_all)
-            self.words_pending_form.remove(self.clients[conn])
+            self.words_pending_from.remove(self.clients[conn])
             self._send_all(word_generation_json(
                     self.room_name,
                     self.words,
                     self.turn_time,
                     list(self.clients.values()),
-                    self.words_pending_form
+                    self.words_pending_from
                     ))
-            if not self.words_pending_form:
+            if not self.words_pending_from:
                 self.start_game()
         else:
             raise Exception('i will fix this later')  # !1111111
