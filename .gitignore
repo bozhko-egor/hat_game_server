@@ -1,3 +1,4 @@
-testclient*.py
+testclient*
 example.py
 test1.py
+testclient.html
