@@ -27,6 +27,9 @@ class WebSocketHandler(websocket.WebSocketHandler):
 
     def on_close(self):
         self.clients_all.pop(self, None)
+        room = self.game_check(self)
+        if room:
+            room.clients.pop(self, None)
         print("ws closed")
 
     def message_handler(self, message):
@@ -34,7 +37,8 @@ class WebSocketHandler(websocket.WebSocketHandler):
         switcher = {
             'set_name': self.set_name,
             'create_room': self.create_room,
-            'join_room': self.join_room
+            'join_room': self.join_room,
+            'get_room_list': self.get_room_list
             }
         func = switcher.get(message['action'], lambda x: 1)  # horrible shit pt.2
         return func(message['data'])
@@ -50,6 +54,15 @@ class WebSocketHandler(websocket.WebSocketHandler):
             if conn in room.clients.keys():
                 return room
 
+    def get_room_list(self, data):
+        names = {room.room_name: len(room.clients.keys()) for room in self.rooms}
+        self.write_message(
+                            {
+                                "action": "room_list",
+                                "data": names
+                            }
+                           )
+
     def create_room(self, data):
         new_room = GameRoom(**data)
         self.rooms.append(new_room)
@@ -59,17 +72,22 @@ class WebSocketHandler(websocket.WebSocketHandler):
     def room_thread(self, room):
         while True:
             room.main_loop()
+            if room.status == 'Finished':
+                break
+        self.rooms.remove(room)
+        exit()
 
     def join_room(self, data):
         for room in self.rooms:
-            if (room.room_name == data['room_name'] and
-                room.room_pass == data['room_pass']):
+            if room.room_name == data['room_name']:
+                if room.room_pass == data['room_pass']:
 
-                room.join_gameroom({self: self.clients_all[self]})
-                break
-            else:
-                raise Exception('invalid room name/pass')
-
+                    room.join_gameroom({self: self.clients_all[self]})
+                    break
+                else:
+                    self.write_message(
+                                        {"success": "false",
+                                         "description": "Invalid room name or room password"})
 
 
 class GameRoom:
@@ -81,10 +99,11 @@ class GameRoom:
         self.turn_time = turn_time
         self.clients = {}
         self.words_all = []
-        self.status = 'new game'
+        self.status = 'New game'
         self.task_queue = []
         self.turn_order = []
         self.score = []
+        self.player_gen = None
 
     def join_gameroom(self, conn):
         self.clients.update(conn)
@@ -106,6 +125,7 @@ class GameRoom:
 
     def start_game(self, data, conn):
         if self.check_game_is_ready:
+            self.player_gen = self.next_player()
             shuffle(self.words_all)
             self.turn_order = list(self.clients.keys())
             shuffle(self.turn_order)
@@ -119,7 +139,7 @@ class GameRoom:
                                             'data':
                                             {
                                                  'team': i,
-                                                 'turn_order': self.turn_order
+                                                 'turn_order': [self.clients[x] for x in self.turn_order]
                                             }
                                         }
                                         )
@@ -143,6 +163,7 @@ class GameRoom:
                 "data": teams
               }
         self._send_all(msg)
+        self.status = "Finished"
 
     def turn_summary(self, data, conn):
         words = data['words']
@@ -153,13 +174,13 @@ class GameRoom:
         if index < len(self.turn_order) // 2:
             self.score[index] += points
         else:
-            self.score[index - len(self.turn_order // 2)] += points
+            self.score[index - len(self.turn_order) // 2] += points
 
         self.next_turn()
 
     def next_turn(self):
         if self.words_all:
-            player = next(self.next_player())
+            player = next(self.player_gen())
             words = self.words_all[:self.turn_time] if len(self.words_all) > self.turn_time else self.words_all
             player.write_message({
                                     "action": "turn",
@@ -173,7 +194,7 @@ class GameRoom:
 
     def check_game_is_ready(self):
         if (len(self.words_all) == self.word_count * len(self.clients.keys())
-                and len(self.clients.keys()) % 2 == 0):
+                and not len(self.clients.keys()) % 2):
             return True
 
     def get_words(self, data, conn):
