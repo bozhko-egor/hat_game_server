@@ -2,10 +2,6 @@ from tornado import websocket, web, ioloop
 import json
 from _thread import *
 from random import shuffle
-from server_replies import *
-
-status_success = {'success': 'true'}
-status_fail = {'success': 'false'}
 
 
 class WebSocketHandler(websocket.WebSocketHandler):
@@ -22,9 +18,9 @@ class WebSocketHandler(websocket.WebSocketHandler):
         if message is None:
             return
         self.check_name(self, json.loads(message))  # присвоить имя, если нет
-        if self.message_handler(message) is not None:  # horrible shit
+        if self.message_handler(message):
             game = self.game_check(self)
-            game.task_queue.insert(0, (message, self))
+            game.task_queue.insert(0, (message, self))  # add task to the game's queue
 
     def on_close(self):
         self.clients_all.pop(self, None)
@@ -39,7 +35,7 @@ class WebSocketHandler(websocket.WebSocketHandler):
             'enter_room': self.create_or_join_room,
             'get_room_list': self.get_room_list
             }
-        func = switcher.get(message['action'], lambda x: 1)  # horrible shit pt.2
+        func = switcher.get(message['action'], lambda x: True)
         return func(message['data'])
 
     def game_check(self, conn):
@@ -48,11 +44,13 @@ class WebSocketHandler(websocket.WebSocketHandler):
                 return room
 
     def check_name(self, conn, message):
+        """Assign a name to the connection if there is none."""
         if conn not in self.clients_all.keys():
             self.clients_all.update({conn: message['player_name']})
             print(self.clients_all)
 
     def get_room_list(self, data):
+        """Respond to the clientwith dict of rooms and players in it."""
         names = {room.room_name: {"players": [x for x in room.clients.values()],
                                   "status": room.status} for room in self.rooms}
         self.write_message(
@@ -63,19 +61,25 @@ class WebSocketHandler(websocket.WebSocketHandler):
                            )
 
     def create_or_join_room(self, data):
+        """Create room with name/pass.
+
+        If there is the room with such combo, join it.
+        """
         if data['room_name'] not in [x.room_name for x in self.rooms]:
             new_room = GameRoom(**data)
             self.rooms.append(new_room)
             new_room.join_gameroom({self: self.clients_all[self]})
             self.write_message(
-                createjoin_json(
-                        new_room.room_name,
-                        new_room.status,
-                        new_room.words,
-                        new_room.turn_time,
-                        list(new_room.clients.values())
-                     )
-                )
+                                {
+                                    "room_name": new_room.room_name,
+                                    "state": new_room.status,
+                                    "data": {
+                                          "words": new_room.words,
+                                          "turn_time": new_room.turn_time,
+                                          "players": list(new_room.clients.values())
+                                        }
+                                }
+                                )
             start_new_thread(self.room_thread, (new_room,))
         else:
             for room in self.rooms:
@@ -83,16 +87,16 @@ class WebSocketHandler(websocket.WebSocketHandler):
                     if room.room_pass == data['room_pass']:
 
                         room.join_gameroom({self: self.clients_all[self]})
-                        self.write_message(
-                            createjoin_json(
-                                room.room_name,
-                                room.status,
-                                room.words,
-                                room.turn_time,
-                                list(room.clients.values())
-                                )
-                            )
-
+                        self.write_message({
+                                            "room_name": room.room_name,
+                                            "state": room.status,
+                                            "data": {
+                                                  "words": room.words,
+                                                  "turn_time": room.turn_time,
+                                                  "players": list(room.clients.values())
+                                              }
+                                            }
+                                           )
                         break
                     else:
                         self.write_message(
@@ -104,6 +108,7 @@ class WebSocketHandler(websocket.WebSocketHandler):
                                          "description": "Invalid room name"})
 
     def room_thread(self, room):
+        """Start this thread for each new room."""
         while True:
             room.main_loop()
             if room.status == 'endgame' or not room.clients.keys():
@@ -129,16 +134,21 @@ class GameRoom:
         self.words_pending_from = []
 
     def join_gameroom(self, conn):
+        """Assign connection to the gameroom."""
         self.clients.update(conn)
         if len(self.clients.values()) > 1:  # если ты не один в комнате
             self._send_all_but_one(
-                                    createjoin_json(
-                                        self.room_name,
-                                        self.status,
-                                        self.words,
-                                        self.turn_time,
-                                        list(self.clients.values())
-                                        ),
+                                    {
+                                                "room_name": self.room_name,
+                                                "state": self.status,
+                                                "data": {
+                                                      "words": self.words,
+                                                      "turn_time": self.turn_time,
+                                                      "players": list(self.clients.values())
+                                                  }
+                                                },
+
+
                                     conn)
 
     def main_loop(self):
@@ -161,14 +171,17 @@ class GameRoom:
             self.status == 'word_generation'
             self.words_pending_from = list(self.clients.values())
             self._send_all(
-                word_generation_json(
-                    self.room_name,
-                    self.words,
-                    self.turn_time,
-                    list(self.clients.values()),
-                    self.words_pending_from
-
-                ))
+                        {
+                                "room_name": self.room_name,
+                                "state": "word_generation",
+                                "data": {
+                                      "words": self.words,
+                                      "turn_time": self.turn_time,
+                                      "players": list(self.clients.values()),
+                                      "words_pending_from": self.words_pending_from
+                                }
+                                }
+                            )
 
     def start_game(self):
         if self.check_game_is_ready:
@@ -181,6 +194,7 @@ class GameRoom:
             self.next_turn()
 
     def next_player(self):
+        """Generator that cycles through list of players."""
         while True:
             for connection in self.turn_order:
                 yield connection
@@ -189,6 +203,10 @@ class GameRoom:
         pass
 
     def high_scores(self):
+        """Start this when words_all count reaches 0.
+
+        After sending this message thread terminates.
+        """
         self._send_all({
                     "room_name": self.room_name,
                     "state": "endgame",
@@ -212,6 +230,10 @@ class GameRoom:
         self.next_turn()
 
     def next_turn(self):
+        """Send current game state to everyone but player whos turn is right now.
+
+        Send updated version with words to explain him instead.
+        """
         if self.words_all:
             player = next(self.player_gen)
             self._send_all({
@@ -227,6 +249,7 @@ class GameRoom:
                               "words_remaining": len(self.words_all)
                         }
                         })
+            shuffle(self.words_all)
             words = self.words_all[:self.turn_time] if len(self.words_all) > self.turn_time else self.words_all
             player.write_message({
                         "room_name": self.room_name,
@@ -257,13 +280,18 @@ class GameRoom:
             self.words_all += words
             print(self.words_all)
             self.words_pending_from.remove(self.clients[conn])
-            self._send_all(word_generation_json(
-                    self.room_name,
-                    self.words,
-                    self.turn_time,
-                    list(self.clients.values()),
-                    self.words_pending_from
-                    ))
+            self._send_all(
+                        {
+                            "room_name": self.room_name,
+                            "state": "word_generation",
+                            "data": {
+                                  "words": self.words,
+                                  "turn_time": self.turn_time,
+                                  "players": list(self.clients.values()),
+                                  "words_pending_from": self.words_pending_from
+                            }
+                            }
+                            )
             if not self.words_pending_from:
                 self.start_game()
         else:
