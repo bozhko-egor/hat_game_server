@@ -3,3 +3,4 @@ example.py
 test1.py
 testclient.html
 *.pyc
+/.idea/*
