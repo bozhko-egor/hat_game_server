@@ -20,7 +20,8 @@ class WebSocketHandler(websocket.WebSocketHandler):
             return
 
         message = json.loads(message)
-        print(message + '\n')
+        print(message)
+        print()
         if isinstance(message, dict) and 'action' in message.keys():
             self.check_name(self, message)
             if self.message_handler(message):
@@ -70,9 +71,12 @@ class WebSocketHandler(websocket.WebSocketHandler):
     def leave_game(self, *_):
         room = self.game_check(self)
         if room:
-            name = room.clients.pop(self, None)
-            room.clients[name] = name
-            room._send_all_but_one({'action': 'player left the game'}, self)
+            if room.status == 'in_room':
+                room.clients.pop(self, None)
+            else:
+                name = room.clients.pop(self, None)
+                room.clients[name] = name
+                room._send_all_but_one({'action': 'player left the game'}, self)
 
     def check_name(self, conn, message):
         """Assign a name to the connection if there is none."""
