@@ -107,13 +107,13 @@ class WebSocketHandler(websocket.WebSocketHandler):
             start_new_thread(self.room_thread, (new_room,))
         else:
             room = self.get_game(data['room_name'], data['room_pass'])
-            if room:
+            if room and room.status == 'in_room':
                 room.join_gameroom({self: self.clients_all[self]})
                 self.write_message(room.get_state())
 
             else:
                 self.write_message({"success": "false",
-                                    "description": "invalid name/pass"})
+                                    "description": "invalid name/pass/game has started already"})
 
     def room_thread(self, room):
         """Start this thread for each new room."""
