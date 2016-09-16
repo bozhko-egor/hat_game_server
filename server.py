@@ -20,6 +20,7 @@ class WebSocketHandler(websocket.WebSocketHandler):
             return
 
         message = json.loads(message)
+        print(message + '\n')
         if isinstance(message, dict) and 'action' in message.keys():
             self.check_name(self, message)
             if self.message_handler(message):
@@ -30,9 +31,9 @@ class WebSocketHandler(websocket.WebSocketHandler):
                                 "description": "invalid command"})
 
     def on_close(self):
-        self.clients_all.pop(self, None)
+        name = self.clients_all.pop(self, None)
         self.leave_game()
-        print("ws closed({})".format(self.request.remote_ip))
+        print("ws closed({}({}))".format(self.request.remote_ip, name))
 
     def message_handler(self, message):
         switcher = {
@@ -77,7 +78,7 @@ class WebSocketHandler(websocket.WebSocketHandler):
         """Assign a name to the connection if there is none."""
         if conn not in self.clients_all.keys():
             self.clients_all.update({conn: message['player_name']})
-            print(self.clients_all)
+            print(self.clients_all.values())
 
     def get_room_list(self, data):
         """Respond to the client with dict of rooms and players in it."""
