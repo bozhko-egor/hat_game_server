@@ -119,8 +119,11 @@ class WebSocketHandler(websocket.WebSocketHandler):
         """Start this thread for each new room."""
         while True:
             room.main_loop()
-            if room.status == 'endgame' or not room.check_any_humans_connected():
-                break
+            try:
+                if room.status == 'endgame' or not room.check_any_humans_connected():
+                    break
+            except RuntimeError:
+                continue
         self.rooms.remove(room)
         exit()
 
