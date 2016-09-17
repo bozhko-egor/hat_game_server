@@ -250,6 +250,7 @@ class GameRoom:
             player = next(self.player_gen)
 
             state = self.get_state()
+            state['data'].update({'turn_player': self.clients[player]})
             self._send_all_but_one(state, player)
 
             shuffle(self.words_all)
