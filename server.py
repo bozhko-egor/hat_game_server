@@ -235,7 +235,7 @@ class GameRoom:
     def turn_summary(self, data, conn):
         words = data['words']
         if words:
-            for entry in self.words:
+            for entry in words:
                 self.words_all.remove(entry)
         points = len(words)
         index = self.turn_order.index(conn)
