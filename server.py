@@ -22,8 +22,8 @@ class WebSocketHandler(websocket.WebSocketHandler):
         message = json.loads(message)
         print(message)
         print()
-        if isinstance(message, dict) and 'action' in message.keys():
-            self.check_name(self, message)
+        if isinstance(message, dict) and 'action' in message:
+        #    self.check_name(self, message)
             if self.message_handler(message):
                 game = self.game_check(self)
                 game.task_queue.insert(0, (message, self))  # add task to the game's queue
@@ -41,20 +41,30 @@ class WebSocketHandler(websocket.WebSocketHandler):
             'enter_room': self.create_or_join_room,
             'get_room_list': self.get_room_list,
             'reconnect': self.reconnect,
-            'disconnect': self.leave_game
+            'disconnect': self.leave_game,
+            'set_name': self.set_name
             }
         func = switcher.get(message['action'], lambda x: True)
         return func(message['data'])
 
+    def set_name(self, data):
+        if self not in self.clients_all:
+            self.clients_all.update({conn: message['player_name']})
+            print(self.clients_all.values())
+            data.update({'success': 'true'})
+        else:
+            data.update({'success': 'false'})
+        self.write_message(data)
+
     def game_check(self, conn):
         for room in self.rooms:
-            if conn in room.clients.keys():
+            if conn in room.clients:
                 return room
 
     def reconnect(self, data):
         room = self.get_game(data['room_name'], data['room_pass'])
         name = self.clients_all[self]
-        if room and name in room.clients.keys():
+        if room and name in room.clients:
             room.clients.pop(name, None)
             room.join_gameroom({self: self.clients_all[self]})
             room._send_all_but_one({'action': 'player reconnected'}, self)
@@ -78,11 +88,11 @@ class WebSocketHandler(websocket.WebSocketHandler):
                 room.clients[name] = name
                 room._send_all_but_one({'action': 'player left the game'}, self)
 
-    def check_name(self, conn, message):
-        """Assign a name to the connection if there is none."""
-        if conn not in self.clients_all.keys():
-            self.clients_all.update({conn: message['player_name']})
-            print(self.clients_all.values())
+    #def check_name(self, conn, message):
+    #    """Assign a name to the connection if there is none."""
+    #    if conn not in self.clients_all:
+    #        self.clients_all.update({conn: message['player_name']})
+    #        print(self.clients_all.values())
 
     def get_room_list(self, data):
         """Respond to the client with dict of rooms and players in it."""
@@ -185,16 +195,16 @@ class GameRoom:
         return func(message['data'], conn)
 
     def check_is_everyone_connected(self):
-        return all([isinstance(conn, WebSocketHandler) for conn in self.clients.keys()])
+        return all([isinstance(conn, WebSocketHandler) for conn in self.clients])
 
     def check_any_humans_connected(self):
-        return any([isinstance(conn, WebSocketHandler) for conn in self.clients.keys()])
+        return any([isinstance(conn, WebSocketHandler) for conn in self.clients])
 
     def start_word_generation(self, data, conn):
         if self.status == 'in_room' and not len(self.clients) % 2:
             self.status = 'word_generation'
 
-            self.turn_order = list(self.clients.keys())
+            self.turn_order = list(self.clients)
             shuffle(self.turn_order)
 
             self.situp = [self.clients[x] for x in self.turn_order]
@@ -221,7 +231,7 @@ class GameRoom:
         pass
 
     def is_connected(self, conn):
-        return conn in self.clients.keys()
+        return conn in self.clients
 
     def high_scores(self):
         """Start this when words_all count reaches 0.
@@ -276,10 +286,10 @@ class GameRoom:
             self.start_game()
 
     def _send_all(self, msg):
-        [con.write_message(msg) for con in self.clients.keys() if not isinstance(con, str)]
+        [con.write_message(msg) for con in self.clients if not isinstance(con, str)]
 
     def _send_all_but_one(self, msg, connection):
-        [con.write_message(msg) for con in self.clients.keys() if con != connection and not isinstance(con, str)]
+        [con.write_message(msg) for con in self.clients if con != connection and not isinstance(con, str)]
 
 
 if __name__ == '__main__':
