@@ -4,12 +4,13 @@ from _thread import *
 from random import shuffle
 
 
-class WebSocketHandler(websocket.WebSocketHandler):
+class SocketHandler(websocket.WebSocketHandler):
 
     clients_all = []
     rooms = []
 
-    def __init__(self):
+    def __init__(self, application, request, **kwargs):
+        super().__init__(application, request, **kwargs)
         self.name = None
 
     def check_origin(self, origin):
@@ -34,9 +35,9 @@ class WebSocketHandler(websocket.WebSocketHandler):
                                 "description": "invalid command"})
 
     def on_close(self):
-        name = self.clients_all.remove(self)
+        self.clients_all.remove(self)
         self.leave_game()
-        print("ws closed({}({}))".format(self.request.remote_ip, name))
+        print("ws closed({}({}))".format(self.request.remote_ip, self.name))
 
     def message_handler(self, message):
         switcher = {
@@ -50,7 +51,8 @@ class WebSocketHandler(websocket.WebSocketHandler):
         return func(message['data'])
 
     def set_name(self, data):
-        if data['player_name'] not in self.clients_all:
+        if data['player_name'] not in [x.name if isinstance(x, SocketHandler) else x for x in self.clients_all]:
+            self.name = data['player_name']
             self.clients_all.append(self)
             print([x.name for x in self.clients_all])
             answer = True
@@ -88,18 +90,12 @@ class WebSocketHandler(websocket.WebSocketHandler):
                 room.clients.remove(self)
             else:
                 room.clients.remove(self)
-                room.clients.append = self.name
+                room.clients.append(self.name)
                 room._send_all_but_one({'action': 'player left the game'}, self)
-
-    #def check_name(self, conn, message):
-    #    """Assign a name to the connection if there is none."""
-    #    if conn not in self.clients_all:
-    #        self.clients_all.update({conn: message['player_name']})
-    #        print(self.clients_all.values())
 
     def get_room_list(self, data):
         """Respond to the client with dict of rooms and players in it."""
-        names = {room.room_name: {"players": [x.name for x in room.clients],
+        names = {room.room_name: {"players": [x.name if isinstance(x, SocketHandler) else x for x in room.clients],
                                   "status": room.status} for room in self.rooms}
         self.write_message({
                                 "action": "room_list",
@@ -185,7 +181,7 @@ class GameRoom:
                   "scores": self.score,
                   "words_pending_from": self.words_pending_from,
                   "words_remaining": len(self.words_all),
-                  "turn_player": self.current_player.name
+                  "turn_player": self.current_player.name if self.current_player else None
               }}
 
     def game_msg_handler(self, message, conn):
@@ -198,10 +194,10 @@ class GameRoom:
         return func(message['data'], conn)
 
     def check_is_everyone_connected(self):
-        return all([isinstance(conn, WebSocketHandler) for conn in self.clients])
+        return all([isinstance(conn, SocketHandler) for conn in self.clients])
 
     def check_any_humans_connected(self):
-        return any([isinstance(conn, WebSocketHandler) for conn in self.clients])
+        return any([isinstance(conn, SocketHandler) for conn in self.clients])
 
     def start_word_generation(self, data, conn):
         if self.status == 'in_room' and not len(self.clients) % 2:
@@ -292,6 +288,6 @@ class GameRoom:
 
 
 if __name__ == '__main__':
-    app = web.Application([(r'/ws', WebSocketHandler), ])
+    app = web.Application([(r'/ws', SocketHandler), ])
     app.listen(8888)
     ioloop.IOLoop.instance().start()
