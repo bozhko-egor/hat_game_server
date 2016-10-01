@@ -51,9 +51,11 @@ class WebSocketHandler(websocket.WebSocketHandler):
         if self not in self.clients_all:
             self.clients_all.update({conn: message['player_name']})
             print(self.clients_all.values())
-            data.update({'success': 'true'})
+            answer = 'true'
         else:
-            data.update({'success': 'false'})
+            answer = 'false'
+        data.update({'success': '{}'.format(answer),
+                    'action': 'set_name'})
         self.write_message(data)
 
     def game_check(self, conn):
