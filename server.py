@@ -73,6 +73,7 @@ class SocketHandler(websocket.WebSocketHandler):
             room.clients.remove(self.name)
             room.join_gameroom(self)
             room._send_all_but_one({'action': 'player reconnected'}, self)
+            self.write_message(room.get_state())
         else:
             self.write_message({'success': False})
 
