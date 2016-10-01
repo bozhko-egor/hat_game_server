@@ -48,13 +48,13 @@ class WebSocketHandler(websocket.WebSocketHandler):
         return func(message['data'])
 
     def set_name(self, data):
-        if self not in self.clients_all:
-            self.clients_all.update({conn: message['player_name']})
+        if data['player_name'] not in self.clients_all.values():
+            self.clients_all.update({self: data['player_name']})
             print(self.clients_all.values())
-            answer = 'true'
+            answer = True
         else:
-            answer = 'false'
-        data.update({'success': '{}'.format(answer),
+            answer = False
+        data.update({'success': answer,
                     'action': 'set_name'})
         self.write_message(data)
 
