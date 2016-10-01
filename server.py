@@ -9,6 +9,9 @@ class WebSocketHandler(websocket.WebSocketHandler):
     clients_all = {}
     rooms = []
 
+    def __init__(self):
+        name = None
+        
     def check_origin(self, origin):
         return True
 
@@ -71,7 +74,7 @@ class WebSocketHandler(websocket.WebSocketHandler):
             room.join_gameroom({self: self.clients_all[self]})
             room._send_all_but_one({'action': 'player reconnected'}, self)
         else:
-            self.write_message({'success': 'false'})
+            self.write_message({'success': False})
 
     def get_game(self, name, password):
         for room in self.rooms:
@@ -124,7 +127,7 @@ class WebSocketHandler(websocket.WebSocketHandler):
                 self.write_message(room.get_state())
 
             else:
-                self.write_message({"success": "false",
+                self.write_message({"success": False,
                                     "description": "invalid name/pass/game has started already"})
 
     def room_thread(self, room):
@@ -137,7 +140,7 @@ class WebSocketHandler(websocket.WebSocketHandler):
             except RuntimeError:
                 continue
         self.rooms.remove(room)
-        exit()
+        exit()  # shutdown thread
 
 
 class GameRoom:
@@ -155,6 +158,7 @@ class GameRoom:
         self.score = []
         self.situp = []
         self.player_gen = None
+        self.current_player = None
         self.words_pending_from = []
 
     def join_gameroom(self, conn):
@@ -163,8 +167,6 @@ class GameRoom:
         state = self.get_state()
         if len(self.clients.values()) > 1:  # если ты не один в комнате
             self._send_all_but_one(state, conn)
-
-        #if self.status == ''
 
     def main_loop(self):
         if self.task_queue:
@@ -184,7 +186,8 @@ class GameRoom:
                   "situp": self.situp,
                   "scores": self.score,
                   "words_pending_from": self.words_pending_from,
-                  "words_remaining": len(self.words_all)
+                  "words_remaining": len(self.words_all),
+                  "turn_player": self.clients[self.current_player]
               }}
 
     def game_msg_handler(self, message, conn):
@@ -227,10 +230,8 @@ class GameRoom:
         """Generator that cycles through list of players."""
         while True:
             for connection in self.turn_order:
+                self.current_player = connection
                 yield connection
-
-    def pause_game(self):
-        pass
 
     def is_connected(self, conn):
         return conn in self.clients
@@ -263,7 +264,6 @@ class GameRoom:
             player = next(self.player_gen)
 
             state = self.get_state()
-            state['data'].update({'turn_player': self.clients[player]})
             self._send_all_but_one(state, player)
 
             shuffle(self.words_all)
@@ -278,8 +278,7 @@ class GameRoom:
             return True
 
     def get_words(self, data, conn):
-        words = data['words']
-        self.words_all += words
+        self.words_all += data['words']
         print(self.words_all)
         self.words_pending_from.remove(self.clients[conn])
         state = self.get_state()
