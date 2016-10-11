@@ -20,12 +20,8 @@ class SocketHandler(websocket.WebSocketHandler):
         print("ws opened({})".format(self.request.remote_ip))
 
     def on_message(self, message):
-        if message is None:
-            return
-
         message = json.loads(message)
         print(message)
-        print()
         if isinstance(message, dict) and 'action' in message:
             if self.message_handler(message):
                 game = self.game_check(self)
@@ -84,15 +80,25 @@ class SocketHandler(websocket.WebSocketHandler):
         else:
             return None
 
-    def leave_game(self, *_):
+    def leave_game(self, *arg):
         room = self.game_check(self)
         if room:
-            if room.status == 'in_room':
-                room.clients.remove(self)
-            else:
+            if arg:
                 room.clients.remove(self)
                 room.clients.append(self.name)
-                room._send_all_but_one({'action': 'player left the game'}, self)
+                self.write_message({
+                                    "action": "disconnect",
+                                    "success": True
+                                    })
+                room._send_all_but_one({
+                                        "player_name": self.name,
+                                        "action": "player_left",
+                                        }, self)
+            else:
+                room._send_all_but_one({
+                                        "player_name": self.name,
+                                        "action": "player_disconnected",
+                                        }, self)
 
     def get_room_list(self, data):
         """Respond to the client with dict of rooms and players in it."""
@@ -127,13 +133,8 @@ class SocketHandler(websocket.WebSocketHandler):
 
     def room_thread(self, room):
         """Start this thread for each new room."""
-        while True:
+        while room.status != 'endgame' or room.check_any_humans_connected():
             room.main_loop()
-            try:
-                if room.status == 'endgame' or not room.check_any_humans_connected():
-                    break
-            except RuntimeError:
-                continue
         self.rooms.remove(room)
         exit()  # shutdown thread
 
@@ -195,10 +196,10 @@ class GameRoom:
         return func(message['data'], conn)
 
     def check_is_everyone_connected(self):
-        return all([isinstance(conn, SocketHandler) for conn in self.clients])
+        return all([isinstance(conn, SocketHandler) for conn in self.clients[:]])
 
     def check_any_humans_connected(self):
-        return any([isinstance(conn, SocketHandler) for conn in self.clients])
+        return any([isinstance(conn, SocketHandler) for conn in self.clients[:]])
 
     def start_word_generation(self, data, conn):
         if self.status == 'in_room' and not len(self.clients) % 2:
