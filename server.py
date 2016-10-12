@@ -1,17 +1,19 @@
 from tornado import websocket, web, ioloop
 import json
 from _thread import *
-from random import shuffle
-
 
 class SocketHandler(websocket.WebSocketHandler):
 
     clients_all = []
     rooms = []
 
-    def __init__(self, application, request, **kwargs):
-        super().__init__(application, request, **kwargs)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.name = None
+        self.room = None
+        self.in_room = False
+        self.words_guessed = []
+        self.words_written = []
 
     def check_origin(self, origin):
         return True
@@ -24,13 +26,13 @@ class SocketHandler(websocket.WebSocketHandler):
         print(message)
         if isinstance(message, dict) and 'action' in message:
             if self.message_handler(message):
-                game = self.game_check(self)
-                game.task_queue.insert(0, (message, self))  # add task to the game's queue
+                self.room.task_queue.insert(0, (message, self))  # add task to the game's queue
         else:
             self.write_message({"success": "false",
                                 "description": "invalid command"})
 
     def on_close(self):
+        self.in_room = False
         self.clients_all.remove(self)
         self.leave_game()
         print("ws closed({}({}))".format(self.request.remote_ip, self.name))
@@ -58,11 +60,6 @@ class SocketHandler(websocket.WebSocketHandler):
                     'action': 'set_name'})
         self.write_message(data)
 
-    def game_check(self, conn):
-        for room in self.rooms:
-            if conn in room.clients:
-                return room
-
     def reconnect(self, data):
         room = self.get_game(data['room_name'], data['room_pass'])
         if room and self.name in room.clients:
@@ -81,11 +78,8 @@ class SocketHandler(websocket.WebSocketHandler):
             return None
 
     def leave_game(self, *arg):
-        room = self.game_check(self)
-        if room:
+        if self.room:
             if arg:
-                room.clients.remove(self)
-                room.clients.append(self.name)
                 self.write_message({
                                     "action": "disconnect",
                                     "success": True
@@ -94,11 +88,13 @@ class SocketHandler(websocket.WebSocketHandler):
                                         "player_name": self.name,
                                         "action": "player_left",
                                         }, self)
+                self.reset_stat(self)
             else:
                 room._send_all_but_one({
                                         "player_name": self.name,
                                         "action": "player_disconnected",
                                         }, self)
+            self.in_room = False
 
     def get_room_list(self, data):
         """Respond to the client with dict of rooms and players in it."""
@@ -117,6 +113,8 @@ class SocketHandler(websocket.WebSocketHandler):
         """
         if data['room_name'] not in [x.room_name for x in self.rooms]:
             new_room = GameRoom(**data)
+            self.room = new_room
+            self.in_room = True
             self.rooms.append(new_room)
             new_room.join_gameroom(self)
             self.write_message(new_room.get_state())
@@ -125,20 +123,36 @@ class SocketHandler(websocket.WebSocketHandler):
             room = self.get_game(data['room_name'], data['room_pass'])
             if room and room.status == 'in_room':
                 room.join_gameroom(self)
+                self.room = room
+                self.in_room = True
                 self.write_message(room.get_state())
 
             else:
                 self.write_message({"success": False,
                                     "description": "invalid name/pass/game has started already"})
 
+    def reset_stat(self, conn):
+        conn.in_room = False
+        conn.room = None
+        conn.words_guessed = []
+        conn.words_written = []
+
     def room_thread(self, room):
         """Start this thread for each new room."""
         while room.status != 'endgame' or room.check_any_humans_connected():
             room.main_loop()
         self.rooms.remove(room)
+        for player in room.clients:
+            self.reset_stat(player)
         exit()  # shutdown thread
 
 
+class Word:
+
+    def __init__(self, word, author):
+        self.word = word
+        self.author = author
+        self.difficulty = 0
 class GameRoom:
 
     def __init__(self, room_name, room_pass, words, turn_time):
@@ -196,10 +210,10 @@ class GameRoom:
         return func(message['data'], conn)
 
     def check_is_everyone_connected(self):
-        return all([isinstance(conn, SocketHandler) for conn in self.clients[:]])
+        return all([conn.in_room for conn in self.clients[:]])
 
     def check_any_humans_connected(self):
-        return any([isinstance(conn, SocketHandler) for conn in self.clients[:]])
+        return any([conn.in_room for conn in self.clients[:]])
 
     def start_word_generation(self, data, conn):
         if self.status == 'in_room' and not len(self.clients) % 2:
@@ -270,8 +284,7 @@ class GameRoom:
             self.high_scores()
 
     def check_game_is_ready(self):
-        if self.status == 'word_generation' and not self.words_pending_from:
-            return True
+        return self.status == 'word_generation' and not self.words_pending_from
 
     def get_words(self, data, conn):
         self.words_all += data['words']
@@ -287,7 +300,6 @@ class GameRoom:
 
     def _send_all_but_one(self, msg, connection):
         [con.write_message(msg) for con in self.clients if con != connection and not isinstance(con, str)]
-
 
 if __name__ == '__main__':
     app = web.Application([(r'/ws', SocketHandler), ])
