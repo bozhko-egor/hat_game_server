@@ -154,7 +154,7 @@ class Word:
     def __init__(self, word, author):
         self.word = word
         self.author = author
-        self.difficulty = 0
+        self.time = 0
 
     def __str__(self):
         return self.word
@@ -278,6 +278,8 @@ class GameRoom:
                               "time": word.time,
                               "author": word.author
                             }})
+            if not self.words_all:
+                self.high_scores()
         else:
             self.words_all.append(word)
             self.next_turn()
@@ -295,7 +297,7 @@ class GameRoom:
 
             shuffle(self.words_all)
             words = self.words_all[:self.turn_time] if len(self.words_all) > self.turn_time else self.words_all
-            state['data'].update({"turn_words": words})
+            state['data'].update({"turn_words": [x.word for x in words]})
             player.write_message(state)
         else:
             self.high_scores()
@@ -313,10 +315,10 @@ class GameRoom:
             self.start_game()
 
     def _send_all(self, msg):
-        [con.write_message(msg) for con in self.clients if not isinstance(con, str)]
+        [con.write_message(msg) for con in self.clients if con.in_room]
 
     def _send_all_but_one(self, msg, connection):
-        [con.write_message(msg) for con in self.clients if con != connection and not isinstance(con, str)]
+        [con.write_message(msg) for con in self.clients if con != connection and con.in_room]
 
 if __name__ == '__main__':
     app = web.Application([(r'/ws', SocketHandler), ])
