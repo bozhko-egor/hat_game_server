@@ -1,6 +1,8 @@
 from tornado import websocket, web, ioloop
 import json
 from _thread import *
+from random import shuffle
+
 
 class SocketHandler(websocket.WebSocketHandler):
 
@@ -13,7 +15,7 @@ class SocketHandler(websocket.WebSocketHandler):
         self.room = None
         self.in_room = False
         self.words_guessed = []
-        self.words_written = []
+        self.words_written = None
 
     def check_origin(self, origin):
         return True
@@ -135,11 +137,11 @@ class SocketHandler(websocket.WebSocketHandler):
         conn.in_room = False
         conn.room = None
         conn.words_guessed = []
-        conn.words_written = []
+        conn.words_written = None
 
     def room_thread(self, room):
         """Start this thread for each new room."""
-        while room.status != 'endgame' or room.check_any_humans_connected():
+        while room.status != 'endgame' and room.check_any_humans_connected():
             room.main_loop()
         self.rooms.remove(room)
         for player in room.clients:
@@ -153,6 +155,14 @@ class Word:
         self.word = word
         self.author = author
         self.difficulty = 0
+
+    def __str__(self):
+        return self.word
+
+    def __repr__(self):
+        return "Word({}, {})".format(self.word, self.author)
+
+
 class GameRoom:
 
     def __init__(self, room_name, room_pass, words, turn_time):
@@ -204,7 +214,7 @@ class GameRoom:
         switch = {
             'start_game': self.start_word_generation,
             'commit_words': self.get_words,
-            'commit_turn': self.turn_summary
+            'commit_answer': self.commit_answer
             }
         func = switch.get(message['action'])
         return func(message['data'], conn)
@@ -255,15 +265,22 @@ class GameRoom:
         state = self.get_state()
         self._send_all(state)
 
-    def turn_summary(self, data, conn):
-        words = data['words']
-        if words:
-            for entry in words:
-                self.words_all.remove(entry)
-        points = len(words)
-        index = self.turn_order.index(conn)
-        self.score[index] += points
-        self.next_turn()
+    def commit_answer(self, data, conn):
+        word = self.words_all.pop(0)
+        word.time += data['time']
+        if not data['last']:
+            conn.words_guessed.append(word)
+            index = self.turn_order.index(conn)
+            self.score[index] += 1
+            self._send_all({"action": "word_info",
+                            "data": {
+                              "word": word.word,
+                              "time": word.time,
+                              "author": word.author
+                            }})
+        else:
+            self.words_all.append(word)
+            self.next_turn()
 
     def next_turn(self):
         """Send current game state to everyone but player whos turn is right now.
@@ -287,8 +304,8 @@ class GameRoom:
         return self.status == 'word_generation' and not self.words_pending_from
 
     def get_words(self, data, conn):
-        self.words_all += data['words']
-        print(self.words_all)
+        conn.words_written = [Word(x, conn.name) for x in data['words']]  #########################################
+        self.words_all += conn.words_written
         self.words_pending_from.remove(conn.name)
         state = self.get_state()
         self._send_all(state)
