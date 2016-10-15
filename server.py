@@ -314,9 +314,13 @@ class GameRoom:
 
     def reroll_teams(self, *args):
         if not self.reroll_gen:
-            self.reroll_gen = itertools.permutations(self.turn_order)
-            next(self.reroll_gen)  # skip initial permutation
-        self.turn_order = list(next(self.reroll_gen))
+            self.reroll_gen = itertools.permutations(self.turn_order[1:])
+            next(self.reroll_gen)
+        try:
+            self.turn_order = self.turn_order[:1] + list(next(self.reroll_gen))
+        except StopIteration:
+            self.reroll_gen = None
+            self.reroll_teams(*args)
         _send_all({"action": "reroll_teams",
                    "data": {
                         "new_situp": [x.name for x in self.turn_order]
