@@ -2,7 +2,7 @@ from tornado import websocket, web, ioloop
 import json
 from _thread import *
 from random import shuffle
-
+import itertools
 
 class SocketHandler(websocket.WebSocketHandler):
 
@@ -176,10 +176,10 @@ class GameRoom:
         self.task_queue = []
         self.turn_order = []
         self.score = []
-        self.situp = []
         self.player_gen = None
         self.current_player = None
         self.words_pending_from = []
+        self.reroll_gen = None
 
     def join_gameroom(self, conn):
         """Assign connection to the gameroom."""
@@ -203,18 +203,19 @@ class GameRoom:
                   "words": self.words,
                   "turn_time": self.turn_time,
                   "players": [x.name for x in self.clients],
-                  "situp": self.situp,
+                  "situp": [x.name for x in self.turn_order],
                   "scores": self.score,
                   "words_pending_from": self.words_pending_from,
                   "words_remaining": len(self.words_all),
-                  "turn_player": self.current_player.name if self.current_player else None
-              }}
+                  "turn_player": self.current_player.name if self.current_player else None,
+            }}
 
     def game_msg_handler(self, message, conn):
         switch = {
             'start_game': self.start_word_generation,
             'commit_words': self.get_words,
-            'commit_answer': self.commit_answer
+            'commit_answer': self.commit_answer,
+            "reroll_teams": self.reroll_teams
             }
         func = switch.get(message['action'])
         return func(message['data'], conn)
@@ -232,7 +233,6 @@ class GameRoom:
             self.turn_order = self.clients
             shuffle(self.turn_order)
 
-            self.situp = [x.name for x in self.turn_order]
             self.words_pending_from = [x.name for x in self.turn_order]
 
             state = self.get_state()
@@ -289,30 +289,38 @@ class GameRoom:
 
         Send updated version with words him instead.
         """
-        if self.words_all:
-            player = next(self.player_gen)
 
-            state = self.get_state()
-            self._send_all_but_one(state, player)
+        player = next(self.player_gen)
 
-            shuffle(self.words_all)
-            words = self.words_all[:self.turn_time] if len(self.words_all) > self.turn_time else self.words_all
-            state['data'].update({"turn_words": [x.word for x in words]})
-            player.write_message(state)
-        else:
-            self.high_scores()
+        state = self.get_state()
+        self._send_all_but_one(state, player)
+
+        shuffle(self.words_all)
+        words = self.words_all[:self.turn_time] if len(self.words_all) > self.turn_time else self.words_all
+        state['data'].update({"turn_words": [x.word for x in words]})
+        player.write_message(state)
 
     def check_game_is_ready(self):
         return self.status == 'word_generation' and not self.words_pending_from
 
     def get_words(self, data, conn):
-        conn.words_written = [Word(x, conn.name) for x in data['words']]  #########################################
+        conn.words_written = [Word(x, conn.name) for x in data['words']]
         self.words_all += conn.words_written
         self.words_pending_from.remove(conn.name)
         state = self.get_state()
         self._send_all(state)
         if not self.words_pending_from:
             self.start_game()
+
+    def reroll_teams(self, *args):
+        if not self.reroll_gen:
+            self.reroll_gen = itertools.permutations(self.turn_order)
+            next(self.reroll_gen)  # skip initial permutation
+        self.turn_order = list(next(self.reroll_gen))
+        _send_all({"action": "reroll_teams",
+                   "data": {
+                        "new_situp": [x.name for x in self.turn_order]
+                    }})
 
     def _send_all(self, msg):
         [con.write_message(msg) for con in self.clients if con.in_room]
