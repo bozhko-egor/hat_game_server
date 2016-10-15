@@ -313,6 +313,8 @@ class GameRoom:
             self.start_game()
 
     def reroll_teams(self, *args):
+        if len(self.turn_order) < 4:
+            return
         if not self.reroll_gen:
             self.reroll_gen = itertools.permutations(self.turn_order[1:])
             next(self.reroll_gen)
@@ -321,10 +323,10 @@ class GameRoom:
         except StopIteration:
             self.reroll_gen = None
             self.reroll_teams(*args)
-        _send_all({"action": "reroll_teams",
-                   "data": {
-                        "new_situp": [x.name for x in self.turn_order]
-                    }})
+        self._send_all({"action": "reroll_teams",
+                       "data": {
+                            "new_situp": [x.name for x in self.turn_order]
+                        }})
 
     def _send_all(self, msg):
         [con.write_message(msg) for con in self.clients if con.in_room]
