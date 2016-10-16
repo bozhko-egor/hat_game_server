@@ -155,6 +155,7 @@ class Word:
         self.word = word
         self.author = author
         self.time = 0
+        self.appeal_score = 0
 
     def __str__(self):
         return self.word
@@ -215,7 +216,8 @@ class GameRoom:
             'start_game': self.start_word_generation,
             'commit_words': self.get_words,
             'commit_answer': self.commit_answer,
-            "reroll_teams": self.reroll_teams
+            "reroll_teams": self.reroll_teams,
+            "appeal_vote": self.process_appeal
             }
         func = switch.get(message['action'])
         return func(message['data'], conn)
@@ -313,13 +315,13 @@ class GameRoom:
             self.start_game()
 
     def reroll_teams(self, *args):
-        if len(self.turn_order) < 4:
+        if len(self.clients) < 4:
             return
         if not self.reroll_gen:
             self.reroll_gen = itertools.permutations(self.turn_order[1:])
             next(self.reroll_gen)
         try:
-            self.turn_order = self.turn_order[:1] + list(next(self.reroll_gen))
+            self.turn_order = self.turn_order[0] + list(next(self.reroll_gen))
         except StopIteration:
             self.reroll_gen = None
             self.reroll_teams(*args)
@@ -327,6 +329,24 @@ class GameRoom:
                        "data": {
                             "new_situp": [x.name for x in self.turn_order]
                         }})
+
+    def process_appeal(self, data, conn):
+        if len(self.clients) < 4:
+            return
+        word = next((x for x in conn.words_guessed if x.word == data['word']), None)
+        if word is None:
+            return
+        word.appeal_score += 1
+        if word.appeal_score >= len(self.clients) - 2:
+            conn.words_guessed.remove(word)
+            index = self.turn_order.index(conn)
+            self.score[index] -= 1
+            _send_all({"action": "appeal_vote_result",
+                       "data": {
+                            "player": conn.name,
+                            "word": word.word,
+                            "result": True
+                         }})
 
     def _send_all(self, msg):
         [con.write_message(msg) for con in self.clients if con.in_room]
