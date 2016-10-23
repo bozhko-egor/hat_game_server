@@ -1,7 +1,7 @@
-testclient*
 example.py
-test1.py
-testclient.html
 *.pyc
 /.idea/*
-test.py
+test*.*
+stat_data.db
+db*.*
+.cache/

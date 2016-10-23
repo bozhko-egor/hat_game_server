@@ -1,8 +1,10 @@
 from tornado import websocket, web, ioloop
 import json
-from _thread import *
+import _thread
 from random import shuffle
 import itertools
+import time
+
 
 class SocketHandler(websocket.WebSocketHandler):
 
@@ -15,7 +17,6 @@ class SocketHandler(websocket.WebSocketHandler):
         self.room = None
         self.in_room = False
         self.words_guessed = []
-        self.words_written = None
 
     def check_origin(self, origin):
         return True
@@ -86,13 +87,13 @@ class SocketHandler(websocket.WebSocketHandler):
                                     "action": "disconnect",
                                     "success": True
                                     })
-                room._send_all_but_one({
+                self.room._send_all_but_one({
                                         "player_name": self.name,
                                         "action": "player_left",
                                         }, self)
                 self.reset_stat(self)
             else:
-                room._send_all_but_one({
+                self.room._send_all_but_one({
                                         "player_name": self.name,
                                         "action": "player_disconnected",
                                         }, self)
@@ -120,7 +121,7 @@ class SocketHandler(websocket.WebSocketHandler):
             self.rooms.append(new_room)
             new_room.join_gameroom(self)
             self.write_message(new_room.get_state())
-            start_new_thread(self.room_thread, (new_room,))
+            _thread.start_new_thread(self.room_thread, (new_room,))
         else:
             room = self.get_game(data['room_name'], data['room_pass'])
             if room and room.status == 'in_room':
@@ -137,7 +138,6 @@ class SocketHandler(websocket.WebSocketHandler):
         conn.in_room = False
         conn.room = None
         conn.words_guessed = []
-        conn.words_written = None
 
     def room_thread(self, room):
         """Start this thread for each new room."""
@@ -146,7 +146,7 @@ class SocketHandler(websocket.WebSocketHandler):
         self.rooms.remove(room)
         for player in room.clients:
             self.reset_stat(player)
-        exit()  # shutdown thread
+        _thread.exit()  # shutdown thread
 
 
 class Word:
@@ -156,6 +156,8 @@ class Word:
         self.author = author
         self.time = 0
         self.appeal_score = 0
+        self.guesser = None
+        self.player = None
 
     def __str__(self):
         return self.word
@@ -173,14 +175,16 @@ class GameRoom:
         self.turn_time = turn_time
         self.clients = []
         self.words_all = []
-        self.status = 'in_room'
+        self.words_in_play = []
+        self.words_pending_from = []
         self.task_queue = []
         self.turn_order = []
-        self.score = []
+        self.status = 'in_room'
+        self.score = None
         self.player_gen = None
         self.current_player = None
-        self.words_pending_from = []
         self.reroll_gen = None
+        self.start_time = None
 
     def join_gameroom(self, conn):
         """Assign connection to the gameroom."""
@@ -203,11 +207,10 @@ class GameRoom:
             "data": {
                   "words": self.words,
                   "turn_time": self.turn_time,
-                  "players": [x.name for x in self.clients],
                   "situp": [x.name for x in self.turn_order],
                   "scores": self.score,
                   "words_pending_from": self.words_pending_from,
-                  "words_remaining": len(self.words_all),
+                  "words_remaining": len(self.words_in_play),
                   "turn_player": self.current_player.name if self.current_player else None,
             }}
 
@@ -230,6 +233,7 @@ class GameRoom:
 
     def start_word_generation(self, data, conn):
         if self.status == 'in_room' and not len(self.clients) % 2:
+            self.start_time = time.time()
             self.status = 'word_generation'
 
             self.turn_order = self.clients
@@ -241,9 +245,10 @@ class GameRoom:
             self._send_all(state)
 
     def start_game(self):
-        if self.check_game_is_ready:
+        if self.status == 'word_generation' and not self.words_pending_from:
+            self.words_in_play = self.words_all
             self.player_gen = self.next_player()
-            shuffle(self.words_all)
+            shuffle(self.words_in_play)
             self.score = [0] * len(self.clients)
             self.status = 'hatgame'
             self.next_turn()
@@ -255,35 +260,52 @@ class GameRoom:
                 self.current_player = connection
                 yield connection
 
-    def is_connected(self, conn):
-        return conn in self.clients
-
     def high_scores(self):
-        """Start this when words_all count reaches 0.
+        """Start this when words_in_play count reaches 0.
 
         After sending this message thread terminates.
         """
+        difficulty = {x.word: x.time for x in sorted(self.words_all, key=lambda y: y.time, Reversed=True)[:3]}
+        easiest_word = {x.word: x.time for x in sorted(self.words_all, key=lambda y: y.time)[:3]}
+        avg_word_diff_by_author = {x.name: sum([y.time for y in self.words_by_author(x)]) / len(self.words_by_author(x)) for x in self.turn_order}
+        time_total = time.time - self.start_time
         self.status = "endgame"
         state = self.get_state()
         self._send_all(state)
+        self._send_all({"action": "post_game_stats",
+                        "data": {
+                                "difficulty": difficulty,
+                                "game_time_total": time_total,
+                                "easiest_word": easiest_word,
+                                "avg_word_diff_by_author": avg_word_diff_by_author
+                        }})
 
     def commit_answer(self, data, conn):
-        word = self.words_all.pop(0)
+        word = self.words_in_play.pop(0)
         word.time += data['time']
         if not data['last']:
+            word.player = conn
             conn.words_guessed.append(word)
+
             index = self.turn_order.index(conn)
+            h_length = len(self.turn_order) // 2
+
+            if index >= h_length:
+                word.guesser = self.turn_order[index - h_length]
+            else:
+                word.guesser = self.turn_order[index + h_length]
+
             self.score[index] += 1
             self._send_all({"action": "word_info",
                             "data": {
                               "word": word.word,
                               "time": word.time,
-                              "author": word.author
+                              "author": word.author.name
                             }})
-            if not self.words_all:
+            if not self.words_in_play:
                 self.high_scores()
         else:
-            self.words_all.append(word)
+            self.words_in_play.append(word)
             self.next_turn()
 
     def next_turn(self):
@@ -297,17 +319,13 @@ class GameRoom:
         state = self.get_state()
         self._send_all_but_one(state, player)
 
-        shuffle(self.words_all)
-        words = self.words_all[:self.turn_time] if len(self.words_all) > self.turn_time else self.words_all
+        shuffle(self.words_in_play)
+        words = self.words_in_play[:self.turn_time] if len(self.words_in_play) > self.turn_time else self.words_in_play
         state['data'].update({"turn_words": [x.word for x in words]})
         player.write_message(state)
 
-    def check_game_is_ready(self):
-        return self.status == 'word_generation' and not self.words_pending_from
-
     def get_words(self, data, conn):
-        conn.words_written = [Word(x, conn.name) for x in data['words']]
-        self.words_all += conn.words_written
+        self.words_all += [Word(x, conn) for x in data['words']]
         self.words_pending_from.remove(conn.name)
         state = self.get_state()
         self._send_all(state)
@@ -321,38 +339,40 @@ class GameRoom:
             self.reroll_gen = itertools.permutations(self.turn_order[1:])
             next(self.reroll_gen)
         try:
-            self.turn_order = self.turn_order[0] + list(next(self.reroll_gen))
+            self.turn_order = self.turn_order[:1] + list(next(self.reroll_gen))
         except StopIteration:
             self.reroll_gen = None
-            self.reroll_teams(*args)
+            self.reroll_teams(args)
         self._send_all({"action": "reroll_teams",
                        "data": {
                             "new_situp": [x.name for x in self.turn_order]
                         }})
 
     def process_appeal(self, data, conn):
-        if len(self.clients) < 4:
-            return
         word = next((x for x in conn.words_guessed if x.word == data['word']), None)
-        if word is None:
+        if word is None or len(self.clients) < 4:
             return
         word.appeal_score += 1
-        if word.appeal_score >= len(self.clients) - 2:
+        if word.appeal_score >= len(self.turn_order) // 2:
+            self.words_all.remove(word)
             conn.words_guessed.remove(word)
             index = self.turn_order.index(conn)
             self.score[index] -= 1
-            _send_all({"action": "appeal_vote_result",
-                       "data": {
-                            "player": conn.name,
-                            "word": word.word,
-                            "result": True
-                         }})
+            self._send_all({"action": "appeal_vote_result",
+                            "data": {
+                                "player": conn.name,
+                                "word": word.word,
+                                "result": True
+                            }})
 
     def _send_all(self, msg):
         [con.write_message(msg) for con in self.clients if con.in_room]
 
     def _send_all_but_one(self, msg, connection):
         [con.write_message(msg) for con in self.clients if con != connection and con.in_room]
+
+    def words_by_author(self, author):
+        return [word for word in self.words_all if word.author == author]
 
 if __name__ == '__main__':
     app = web.Application([(r'/ws', SocketHandler), ])
