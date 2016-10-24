@@ -187,10 +187,9 @@ class GameRoom:
 
     def join_gameroom(self, conn):
         """Assign connection to the gameroom."""
-        self.clients.append(conn)
         self.turn_order.append(conn)
         state = self.get_state()
-        if len(self.clients) > 1:  # если ты не один в комнате
+        if len(self.turn_order) > 1:  # если ты не один в комнате
             self._send_all_but_one(state, conn)
 
     def main_loop(self):
@@ -226,13 +225,13 @@ class GameRoom:
         return func(message['data'], conn)
 
     def check_is_everyone_connected(self):
-        return all([conn.in_room for conn in self.clients[:]])
+        return all([conn.in_room for conn in self.turn_order[:]])
 
     def check_any_humans_connected(self):
-        return any([conn.in_room for conn in self.clients[:]])
+        return any([conn.in_room for conn in self.turn_order[:]])
 
     def start_word_generation(self, data, conn):
-        if self.status == 'in_room' and not len(self.clients) % 2:
+        if self.status == 'in_room' and not len(self.turn_order) % 2:
             self.start_time = time.time()
             self.status = 'word_generation'
             shuffle(self.turn_order)
@@ -247,7 +246,7 @@ class GameRoom:
             self.words_in_play = self.words_all
             self.player_gen = self.next_player()
             shuffle(self.words_in_play)
-            self.score = [0] * len(self.clients)
+            self.score = [0] * len(self.turn_order)
             self.status = 'hatgame'
             self.next_turn()
 
@@ -331,7 +330,7 @@ class GameRoom:
             self.start_game()
 
     def reroll_teams(self, *args):
-        if len(self.clients) < 4:
+        if len(self.turn_order) < 4:
             return
         if not self.reroll_gen:
             self.reroll_gen = itertools.permutations(self.turn_order[1:])
@@ -348,7 +347,7 @@ class GameRoom:
 
     def process_appeal(self, data, conn):
         word = next((x for x in conn.words_guessed if x.word == data['word']), None)
-        if word is None or len(self.clients) < 4:
+        if word is None or len(self.turn_order) < 4:
             return
         word.appeal_score += 1
         if word.appeal_score >= len(self.turn_order) // 2:
@@ -364,10 +363,10 @@ class GameRoom:
                             }})
 
     def _send_all(self, msg):
-        [con.write_message(msg) for con in self.clients if con.in_room]
+        [con.write_message(msg) for con in self.turn_order if con.in_room]
 
     def _send_all_but_one(self, msg, connection):
-        [con.write_message(msg) for con in self.clients if con != connection and con.in_room]
+        [con.write_message(msg) for con in self.turn_order if con != connection and con.in_room]
 
     def words_by_author(self, author):
         return [word for word in self.words_all if word.author == author]
