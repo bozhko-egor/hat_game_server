@@ -243,7 +243,7 @@ class GameRoom:
 
     def start_game(self):
         if self.status == 'word_generation' and not self.words_pending_from:
-            self.words_in_play = self.words_all
+            self.words_in_play = self.words_all[:]
             self.player_gen = self.next_player()
             shuffle(self.words_in_play)
             self.score = [0] * len(self.turn_order)
@@ -260,22 +260,22 @@ class GameRoom:
     def high_scores(self):
         """Start this when words_in_play count reaches 0.
 
-        After sending this message thread terminates.
+        After sending these messages thread terminates.
         """
-        difficulty = {x.word: x.time for x in sorted(self.words_all, key=lambda y: y.time, Reversed=True)[:3]}
+        difficulty = {x.word: x.time for x in sorted(self.words_all, key=lambda y: y.time, reverse=True)[:3]}
         easiest_word = {x.word: x.time for x in sorted(self.words_all, key=lambda y: y.time)[:3]}
-        avg_word_diff_by_author = {x.name: sum([y.time for y in self.words_by_author(x)]) / len(self.words_by_author(x)) for x in self.turn_order}
-        time_total = time.time - self.start_time
+        avg_word_diff_by_author = {x.name: (sum([y.time for y in self.words_by_author(x)]) / len(self.words_by_author(x))) for x in self.turn_order}
+        time_total = int((float(time.time()) - self.start_time)*1000)  # in ms
         self.status = "endgame"
         state = self.get_state()
-        self._send_all(state)
         self._send_all({"action": "post_game_stats",
                         "data": {
-                                "difficulty": difficulty,
+                                "hardest_words": difficulty,
                                 "game_time_total": time_total,
                                 "easiest_word": easiest_word,
                                 "avg_word_diff_by_author": avg_word_diff_by_author
                         }})
+        self._send_all(state)
 
     def commit_answer(self, data, conn):
         word = self.words_in_play.pop(0)
@@ -368,8 +368,8 @@ class GameRoom:
     def _send_all_but_one(self, msg, connection):
         [con.write_message(msg) for con in self.turn_order if con != connection and con.in_room]
 
-    def words_by_author(self, author):
-        return [word for word in self.words_all if word.author == author]
+    def words_by_author(self, w_author):
+        return [word for word in self.words_all if word.author == w_author]
 
 if __name__ == '__main__':
     app = web.Application([(r'/ws', SocketHandler), ])
