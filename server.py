@@ -66,7 +66,7 @@ class SocketHandler(websocket.WebSocketHandler):
     def reconnect(self, data):
         room = self.get_game(data['room_name'], data['room_pass'])
         if room and self.name in room.clients:
-            room.clients.remove(self.name)
+            room.turn_order.remove(self.name)
             room.join_gameroom(self)
             room._send_all_but_one({'action': 'player reconnected'}, self)
             self.write_message(room.get_state())
@@ -101,7 +101,7 @@ class SocketHandler(websocket.WebSocketHandler):
 
     def get_room_list(self, data):
         """Respond to the client with dict of rooms and players in it."""
-        names = {room.room_name: {"players": [x.name if isinstance(x, SocketHandler) else x for x in room.clients],
+        names = {room.room_name: {"players": [x.name if isinstance(x, SocketHandler) else x for x in room.turn_order],
                                   "status": room.status} for room in self.rooms}
         self.write_message({
                                 "action": "room_list",
@@ -144,7 +144,7 @@ class SocketHandler(websocket.WebSocketHandler):
         while room.status != 'endgame' and room.check_any_humans_connected():
             room.main_loop()
         self.rooms.remove(room)
-        for player in room.clients:
+        for player in room.turn_order:
             self.reset_stat(player)
         _thread.exit()  # shutdown thread
 
@@ -173,7 +173,6 @@ class GameRoom:
         self.room_pass = room_pass
         self.words = words  # words per player
         self.turn_time = turn_time
-        self.clients = []
         self.words_all = []
         self.words_in_play = []
         self.words_pending_from = []
@@ -189,6 +188,7 @@ class GameRoom:
     def join_gameroom(self, conn):
         """Assign connection to the gameroom."""
         self.clients.append(conn)
+        self.turn_order.append(conn)
         state = self.get_state()
         if len(self.clients) > 1:  # если ты не один в комнате
             self._send_all_but_one(state, conn)
@@ -235,8 +235,6 @@ class GameRoom:
         if self.status == 'in_room' and not len(self.clients) % 2:
             self.start_time = time.time()
             self.status = 'word_generation'
-
-            self.turn_order = self.clients
             shuffle(self.turn_order)
 
             self.words_pending_from = [x.name for x in self.turn_order]
