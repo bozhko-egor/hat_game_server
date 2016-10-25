@@ -4,6 +4,7 @@ import _thread
 from random import shuffle
 import itertools
 import time
+from db_conn import GameDataDb
 
 
 class SocketHandler(websocket.WebSocketHandler):
@@ -52,7 +53,7 @@ class SocketHandler(websocket.WebSocketHandler):
         return func(message['data'])
 
     def set_name(self, data):
-        if data['player_name'] not in [x.name if isinstance(x, SocketHandler) else x for x in self.clients_all]:
+        if data['player_name'] not in [x.name for x in self.clients_all]:
             self.name = data['player_name']
             self.clients_all.append(self)
             print([x.name for x in self.clients_all])
@@ -276,6 +277,19 @@ class GameRoom:
                                 "avg_word_diff_by_author": avg_word_diff_by_author
                         }})
         self._send_all(state)
+        if self.room_name == 'hatgame' or len(self.turn_order) < 4: # do not save words for testing games
+            return
+        db_connect = GameDataDb()
+        db_connect.create_game_table(self.start_time,
+                                     self.room_name,
+                                     self.words,
+                                     time_total
+                                     )
+        for entry in self.words_all:
+            db_connect.insert_word(entry.word,
+                                   entry.time,
+                                   entry.author.name)
+        db_connect.close()
 
     def commit_answer(self, data, conn):
         word = self.words_in_play.pop(0)
@@ -370,6 +384,7 @@ class GameRoom:
 
     def words_by_author(self, w_author):
         return [word for word in self.words_all if word.author == w_author]
+
 
 if __name__ == '__main__':
     app = web.Application([(r'/ws', SocketHandler), ])

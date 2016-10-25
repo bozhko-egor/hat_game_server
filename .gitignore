@@ -3,5 +3,4 @@ example.py
 /.idea/*
 test*.*
 stat_data.db
-db*.*
 .cache/
